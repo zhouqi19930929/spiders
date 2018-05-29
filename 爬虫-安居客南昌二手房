@@ -1,0 +1,59 @@
+import re
+import requests
+import pandas
+import pymysql
+from sqlalchemy import create_engine
+import time
+import threading
+header={
+    'User-Agent':'Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/63.0.3239.84 Safari/537.36',
+}
+huxinglist=[]
+mianjilist=[]
+loucenglist=[]
+jianzaoshijianlist=[]
+zongjialist=[]
+danjialist=[]
+titlelist=[]
+wangyelist=[]
+xiaoqulist=[]
+dizhilist=[]
+page=1
+spnum=0
+threadnum=0#该数字代表线程数
+liveplace=input('请输入你想要查询房价的小区名：')
+def anjuke(liveplace,page):
+    global spnum
+    global threadnum
+    try:
+        searchurl='https://nc.anjuke.com/sale/p%s/?from=zjsr&kw=%s#filtersort'%(page,liveplace)
+        response=requests.get(searchurl,headers=header,timeout=5,allow_redirects=False)
+        sourcedata=response.content.decode(response.apparent_encoding,'ignore')
+        huxinglist.extend(list(map(lambda x:x[(len(x)-4):len(x)],re.findall('details-item">\\n\s+?<span>\d{1,2}室\d{1,2}厅',sourcedata))))
+        mianjilist.extend(list(map(lambda x:re.search('\d{1,4}m²',x).group(),re.findall('details-item">\\n\s+?<span>\d{1,2}室\d{1,2}厅</span><em class="spe-lines">\|</em><span>\d{1,4}m²',sourcedata))))
+        loucenglist.extend(list(map(lambda x:x[x.rindex('>')+1:len(x)],re.findall('(details-item">\\n\s+?<span>\d{1,2}室\d{1,2}厅</span><em class="spe-lines">\|</em><span>\d{1,4}m²</span><em class="spe-lines">\|</em><span>.+?\(.+?\)|details-item">\\n\s+?<span>\d{1,2}室\d{1,2}厅</span><em class="spe-lines">\|</em><span>\d{1,4}m²</span><em class="spe-lines">\|</em><span>.+?层)',sourcedata))))
+        jianzaoshijianlist.extend(list(map(lambda x:x[0:4],re.findall('\d{4}年建造</span><span class="brokername"',sourcedata))))
+        zongjialist.extend(list(map(lambda x:re.search('\d{1,12}',x).group()+'万',re.findall('pro-price">\\n\s+?<span class="price-det"><strong>\d{1,12}',sourcedata))))
+        danjialist.extend(list(map(lambda x:re.search('\d{1,12}元/m²',x).group(),re.findall('pro-price">\\n\s+?<span class="price-det"><strong>\d{1,12}.+?<span class="unit-price">\d{1,12}元/m²',sourcedata))))
+        titlelist.extend(list(map(lambda x:re.search('title=".+?"',x).group()[7:len(x)],re.findall('data-company=.+?href="https://.+?"',sourcedata))))
+        wangyelist.extend(list(map(lambda x:re.search('href=".+?\d{10,20}',x).group()[6:len(x)],re.findall('data-company=.+?href="https://.+?"',sourcedata))))
+        xiaoqulist.extend(list(map(lambda x:x[21:len(x)-5],re.findall('comm-address" title=".+?&nbsp',sourcedata))))
+        dizhilist.extend(list(map(lambda x:x[x.rindex(';')+1:len(x)-2],re.findall('comm-address" title=".+?&nbsp;&nbsp;.+?">',sourcedata))))
+        threadnum+=1
+        if len(list(map(lambda x:re.search('title=".+?"',x).group()[7:len(x)],re.findall('data-company=.+?href="https://.+?"',sourcedata))))==0:
+            spnum=1#spnum默认为0，这里当它为1的时候一般说明，这个时候就要结束了
+    except:
+        spnum=1#spnum默认为0，这里当它为1的时候一般说明发生redirect，这个时候就要结束了
+        threadnum+=1
+while spnum==0:
+    thr=threading.Thread(target=anjuke,args=(liveplace,str(page)))
+    thr.start()
+    time.sleep(0.3)#沉睡对当前进程是有效的，对其他进程还是无影响
+    print(threadnum)
+    page+=1
+while int(page)-1!=int(threadnum):#要是有线程还在运行，沉睡秒，全部结束后结果才能放到mysql里面
+    time.sleep(0.3)
+result = pandas.DataFrame([titlelist,huxinglist, mianjilist,loucenglist,jianzaoshijianlist,zongjialist,danjialist,wangyelist,xiaoqulist,dizhilist],index=['标题','户型','面积','楼层','建筑时间','总价','单价','链接','小区名','地址']).T.sort_values(by='单价')
+engine = create_engine('mysql+pymysql://root:zq5042919@localhost:3306/world?charset=utf8') # 这里一定要写成mysql+pymysql，不要写成mysql+mysqldb
+result.to_sql('fangchan%s'%time.strftime('%Y-%m-%d %H-%M-%S',time.localtime()),con = engine,if_exists='append',schema='world',index=False,chunksize=10000)  
+engine.dispose()
