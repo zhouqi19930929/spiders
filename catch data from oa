@@ -1,0 +1,301 @@
+import requests
+from selenium import webdriver
+import re
+import time
+from selenium.webdriver.chrome.options import Options
+import pyperclip
+import pyautogui
+import datetime
+import pandas
+from tkinter import ttk
+from tkinter import Scrollbar
+import tkinter
+import getpass
+#先要输入用户名和密码
+login=0
+def showresult():
+    result1=pandas.DataFrame([idlist,listenlist,moneylist,departmentlist,flownumlist,state_list,FKNClist],index=['','','','','','','']).T
+    print('    学员号','     听课证号','   金额','   部门','       流水号','   状态','  批件编号')
+    print(result1)
+while login==0:
+    user=input('输入你的用户名：')
+    password=getpass.getpass('输入你的密码：')
+    username=input('输入你的名字：')
+    print('开始后台爬虫获取数据。。。。。。')
+    flownumlist=[]
+    urllist=[]
+    idlist=[]
+    listenlist=[]
+    departmentlist=[]
+    dealurllist=[]
+    moneylist=[]
+    test=[]
+    state_list=[]
+    FKNClist=[]
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")
+    wd = webdriver.Chrome(chrome_options=chrome_options)#启用无头浏览器：
+    #wd.delete_all_cookies()
+    wd.get('http://passport.xdf.cn/e2/indexV5.aspx?returnUrl=http%3A%2F%2Foa.xdf.cn%2Fxdfoa%2Foauth%2Fauthorize')
+    wd.find_element_by_xpath('//*[@id="txtUser"]').clear()
+    wd.find_element_by_xpath('//*[@id="txtUser"]').send_keys(user)
+    wd.find_element_by_xpath('//*[@id="txtPwd"]').send_keys(password)
+    wd.find_element_by_xpath('//*[@id="loginBtn"]').click() #若是按钮表单则是submit
+    try:
+        wd.get('http://oa.xdf.cn/general/')
+        login=1
+    except:
+        print('用户名或密码错误！重新输入！')
+        login=0
+print('登陆完成。。。。。。')
+wd.switch_to_frame("leftmenu")
+wd.switch_to_frame("menu")
+wd.find_element_by_id('m03').click()
+wd.find_element_by_id('f5').click()
+#加载时间限制，如果10秒内没有加载完成就结束，如果加载完成就会提前结束判定
+#由于条目可能由未接收到办理中，故该项目存在运行2次的必要 
+def holdon():
+    global wd
+    try:
+        while wd.find_element_by_class_name('pPageStat').get_attribute('innerHTML')=='加载中，请稍后 ...':
+            time.sleep(0.1)
+    except:
+        holdon()
+for i in range(0,2):
+    try:
+        if i == 0:
+            wd.switch_to_default_content()
+            wd.switch_to_frame("table_index")
+            wd.switch_to_frame("main")
+            wd.switch_to_frame("menu_main")
+        else:
+            wd.switch_to_default_content()
+            wd.switch_to_frame("table_index")
+            wd.switch_to_frame("main")
+            wd.switch_to_frame("menu_top")
+            t=wd.find_element_by_xpath('//*[@id="navMenu"]/a[2]')
+            t.click()
+            wd.switch_to_default_content()
+            wd.switch_to_frame("table_index")
+            wd.switch_to_frame("main")
+            wd.switch_to_frame("menu_main")
+        holdon()
+        paget=int(re.search('\d+',re.search('共\s\d+?\s条',wd.find_element_by_class_name('pPageStat').get_attribute('innerHTML')).group()).group())
+        page=(int(paget/10) if paget%10==0 else int(paget/10)+1)#找到有几页的关键处理
+        #wd.find_element_by_id('RUN_NAME').send_keys('')#在这里有可能会修改要输入的文本:但下面依然可以获取其余数据，返款申请流程
+        #wd.find_element_by_id('btnQuery').click()
+        while int(page)>0:#这里要循环翻个页
+            table=wd.find_element_by_id('flow_list')
+            tabledata=table.find_elements_by_tag_name('tr')
+            filterlist=list(filter(lambda x:len(re.findall('.*返款申请流程.*',x.get_attribute('innerHTML')))>0,tabledata))
+            flownumlist.extend(list(map(lambda x:'NO.'+re.search('\d{7,10}',re.search('\d{7,10}</div></td><td align="left"',x.get_attribute('innerHTML')).group()).group(),filterlist)))
+            urllist.extend(list(map(lambda x:'http://oa.xdf.cn'+re.search('[^"].+[^"]',re.search('"/general/workflow/list/.+?"',x.get_attribute('innerHTML')).group()).group(),filterlist)))
+            #time.sleep(0.1)
+            wd.find_element_by_class_name('pNext').click()
+            holdon()
+            page-=1
+    except:
+        if i ==1:
+            print('[未接收]部分无数据')
+        else:
+            print('[办理中]部分无数据')
+    #开始挂上所有窗口
+print('开始用正则逐步获取数据。。。。。。')
+for eachurl in urllist:
+    newwindow = 'window.open("%s");'%eachurl
+    wd.execute_script(newwindow)
+for i in range(1,len(wd.window_handles)):
+    wd.switch_to_window(wd.window_handles[-i])
+    while len(test)==0:#打开的页面加载判定
+        try:
+            test=wd.find_element_by_class_name('tabbor').find_elements_by_tag_name('tr')
+        except:
+            time.sleep(0.1)
+    test=[]        
+    dealtable=wd.find_element_by_class_name('tabbor').find_elements_by_tag_name('tr')#这个时候还是webelement对象，且是一个列表
+    temp1=list(map(lambda x:x.text,dealtable))#text显性化数据：['学员号： NC9256 听课证号： CLNC0022720001注意已冻结听课证号不同', '学员姓名： 邓文铎 批件号： FKNC', '返款金额： 8480 申请人部门： 优能一对一部', '返款原因： 前学管胡萌老师遗留退费问题。2016年该学生计划出国，改上了国际班，故要求将剩余一对一的课程费用进行退款。']
+    idlist.append(re.search('NC\d+',temp1[0]).group())
+    state_list.append('-')
+    FKNClist.append('-')
+    listenlist.append(re.search('.+\d+',temp1[0].split()[3]).group())
+    #这里所谓的部门列表需要根据听课证号来
+    if re.search('[^\d]+',listenlist[i-1]).group().upper()=='VIP' or re.search('[^\d]+',listenlist[i-1]).group().upper()=='CLNC':
+        departmentlist.append('个性化返款')#departmentlist.append(temp1[2].split()[3])
+    elif temp1[2].split()[3].find('虚拟')>=0:
+        departmentlist.append('虚拟班返款')
+    else:
+        departmentlist.append('精品班返款')
+    moneylist.append(re.search('\d+',temp1[2].split()[1]).group())
+    wd.find_element_by_xpath('//*[@id="btnList"]/input[1]').click()
+    #这里加一条语句判定网页加载完成
+#测试阶段：下面的列表暂时直接赋值，实际如果有数据的话，下面赋值全部删除
+showresult()
+judgestr1=input('后台爬虫获取数据完成，结果如上，若要继续，则打开新东方办公系统，进入到{批件管理}-{返款批件}保持该页面，随后输入y   ：')
+while judgestr1!='y':
+    judgestr1=input('输入字符不合规，重新输入！  :')
+def coordinate():#获取所有准备输入点右侧20个距离的坐标，用于是否被选中判定
+    global usefulcor
+    usefulcor=[]
+    tasklist=['学员号.png','听课证号.png','批件金额.png','批件人.png','截止日期.png','备注.png','审核.png']
+    try:#这里可以试着加一个最大尝试次数
+        for img in tasklist:
+            x,y=pyautogui.center((pyautogui.locateOnScreen(img)))
+            usefulcor.append((x+30,y))
+    except:
+        usefulcor=[]
+        coordinate()
+def inputway():
+    try:
+        pyautogui.center((pyautogui.locateOnScreen('输入法.png')))
+    except:
+        pyautogui.keyDown('ctrl')
+        pyautogui.press(' ')
+        pyautogui.keyUp('ctrl') 
+def ifactivate(x):#rgb颜色判定，用于判断某特定项目是否被选中
+    while (10, 36, 106)!=pyautogui.screenshot().getpixel(usefulcor[x]):
+        time.sleep(0.1)
+def pressenter():#enter与tab相互切换，判断错误过程窗口结束#t1=datetime.datetime.now()、、(datetime.datetime.now()-t1).seconds<3:
+    while (10, 36, 106)!=pyautogui.screenshot().getpixel(usefulcor[5]):
+        pyautogui.press('enter')
+        time.sleep(0.1)
+def ifwindow():#判断弹窗是否出现，专用于听课证号部分
+    global window_state
+    window_state=''
+    t1=datetime.datetime.now()
+    while (10, 36, 106)!=pyautogui.screenshot().getpixel(usefulcor[2]) and (datetime.datetime.now()-t1).seconds<4:
+        time.sleep(0.1)
+    if (datetime.datetime.now()-t1).seconds>=4:
+        try:
+            pyautogui.center((pyautogui.locateOnScreen('无法找到数据.png')))
+            window_state='异常'
+            pressenter()
+        except:
+            window_state='正常'
+            ifwindow()
+state_list=[]
+#pandas.DataFrame([idlist,listenlist,moneylist,departmentlist,flownumlist,state_list],index=['学员号','听课证号','金额','部门','流水号','状态']).T
+pyautogui.moveTo(50, 1)
+pyautogui.click()
+#这里加上输入法关闭监测
+coordinate()
+inputway()
+pyperclip.copy('')
+pyautogui.keyDown('ctrl')
+pyautogui.press('a')
+pyautogui.keyUp('ctrl') 
+pyautogui.press('tab')
+#idlist=['NC9256','NC9256']
+#listenlist=['CLNC0022720','CLNC0022720001']
+#moneylist=['5375','8480']
+#departmentlist=['虚拟班返款','个性化返款']
+#flownumlist=['NO.7551513','个性化返款NO.7632563']
+for sequence in range(0,len(idlist)):
+    try:
+        ifactivate(0)
+        pyautogui.typewrite(idlist[sequence])
+        pyautogui.press('tab')
+        pyautogui.press('tab')
+        ifactivate(1)
+        pyautogui.typewrite(listenlist[sequence])
+        pyautogui.press('tab')
+        ifwindow()
+        if window_state=='异常':
+            Nonetype
+        ifactivate(2)
+        pyautogui.typewrite(moneylist[sequence])
+        pyautogui.press('tab')
+        ifactivate(3)
+        pyperclip.copy(username)
+        pyautogui.keyDown('ctrl')
+        pyautogui.press('v')
+        pyautogui.keyUp('ctrl')
+        pyautogui.press('tab')
+        pyautogui.press('tab')
+        ifactivate(4)
+        year=str((datetime.date.today()+datetime.timedelta(days=5)).year)
+        month=str((datetime.date.today()+datetime.timedelta(days=5)).month)
+        day=str((datetime.date.today()+datetime.timedelta(days=5)).day)
+        pyautogui.typewrite(year+'/'+month+'/'+day+' '+'23:59:59')
+        pyautogui.press('tab')
+        ifactivate(5)
+        pyperclip.copy(departmentlist[sequence]+','+flownumlist[sequence])#这里个性化返款文本有存在修改的可能性！！！！！！
+        pyautogui.keyDown('ctrl')
+        pyautogui.press('v')
+        pyautogui.keyUp('ctrl')
+        pyautogui.press('tab')
+        pyautogui.press('tab')
+        ifactivate(6)
+        pyautogui.keyDown('ctrl')
+        pyautogui.press(' ')
+        pyautogui.keyUp('ctrl')
+        pyautogui.typewrite('yishenhe')
+        pyautogui.press(' ')
+        pyautogui.keyDown('ctrl')
+        pyautogui.press(' ')
+        pyautogui.keyUp('ctrl')
+        if sequence!=len(idlist)-1:#停止条件设定
+            pyautogui.keyDown('ctrl')
+            pyautogui.press('a')
+            pyautogui.keyUp('ctrl') 
+            pyautogui.press('tab')
+        state_list.append('正常')
+    except:
+        state_list.append('-')
+        pyautogui.moveTo(usefulcor[1])
+        pyautogui.click()
+        pyautogui.press('delete')
+        pressenter()
+        pyautogui.moveTo(usefulcor[0])
+        pyautogui.click()     
+        pyautogui.press('delete')
+FKNCstat=input('输入已有的最后一个批件编号(如：FKNC004054)          :')
+FKNCsta=re.search('\d+',FKNCstat).group()
+prefix=re.search('[^\d]+',FKNCstat).group()
+length=len(str(FKNCsta))
+for eachFKNC in range(0,len(state_list)):
+    if state_list[eachFKNC]=='正常':
+        FKNCsta=int(FKNCsta)+1
+        FKNClist[eachFKNC]=prefix+str(FKNCsta).zfill(length)
+    else:
+        FKNClist[eachFKNC]='-'
+showresult()
+judgestr2=input('将该结果返回浏览器并且提交，则输入y：')
+while judgestr2!='y':
+    judgestr2=input('输入字符不合规，重新输入！:')
+for i in range(1,len(wd.window_handles)):
+    if state_list[i-1]!='正常':
+        continue
+    wd.switch_to_window(wd.window_handles[-i])
+    while len(test)==0:#打开的页面加载判定
+        try:
+            test=wd.find_element_by_id('form1').find_element_by_class_name('tabbg').find_element_by_class_name('tabbor').get_attribute('innerHTML')
+        except:
+            time.sleep(0.1)
+    test=[]  
+    wd.find_element_by_id('form1').find_element_by_class_name('tabbg').find_element_by_class_name('tabbor').find_element_by_id('DATA_124').clear()
+    try:
+        wd.find_element_by_id('form1').find_element_by_class_name('tabbg').find_element_by_class_name('tabbor').find_element_by_id('DATA_124').send_keys(FKNClist[i-1])#重要数据放回
+    except:
+        pass
+    wd.find_element_by_id('content').clear()
+    wd.find_element_by_id('content').send_keys('截止日期'+(datetime.date.today()+datetime.timedelta(days=5)).strftime("%Y-%m-%d")+"        "+FKNClist[i-1])
+    wd.find_element_by_id('transfer').click()
+    while len(test)==0:#打开的页面加载判定，即将进入终极最后的步骤
+        try:
+            try:
+                wd.find_element_by_id('form1').find_element_by_class_name('notice').find_element_by_class_name('bottom').find_element_by_class_name('BigButtonB').click()
+            except:
+                pass
+            try:
+                wd.switch_to_default_content()
+                wd.switch_to_frame("menu_main")
+                break
+            except:
+                pass
+            test=wd.find_element_by_id('layui-layer3').find_element_by_class_name('layui-layer-btn').get_attribute('innerHTML')
+        except:
+            time.sleep(0.1)
+    if len(test)!=0:
+        wd.find_element_by_id('layui-layer3').find_element_by_class_name('layui-layer-btn').find_element_by_class_name('layui-layer-btn0').click()
+wd.quit()
+input('全部进程结束，按回车退出！  :')
